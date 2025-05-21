@@ -1,1 +1,85 @@
+- name: Install prerequisites for Docker
+  dnf:
+    name:
+      - yum-utils
+      - device-mapper-persistent-data
+      - lvm2
+    state: present
+    update_cache: yes
+
+- name: Remove podman-docker package if present (conflicts with Docker CE)
+  dnf:
+    name: podman-docker
+    state: absent
+
+- name: Add Docker CE repository
+  get_url:
+    url: https://download.docker.com/linux/centos/docker-ce.repo
+    dest: /etc/yum.repos.d/docker-ce.repo
+
+- name: Install Docker
+  dnf:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+    state: present
+
+- name: Install Docker Compose
+  get_url:
+    url: https://github.com/docker/compose/releases/download/v2.24.1/docker-compose-linux-x86_64
+    dest: /usr/local/bin/docker-compose
+    mode: '0755'
+
+- name: Start and enable Docker service
+  systemd:
+    name: docker
+    state: started
+    enabled: yes
+
+- name: Ensure docker group exists
+  group:
+    name: docker
+    state: present
+
+- name: Add user to docker group
+  user:
+    name: "{{ ansible_user }}"
+    groups: docker
+    append: yes
+
+- name: Install AWS CLI
+  dnf:
+    name: awscli
+    state: present
+
+- name: Clone application repo
+  git:
+    repo: 'https://github.com/Lakshmanp145/docker-compose.git'
+    dest: /opt/3tier-app
+    version: main
+
+- name: Install MySQL libraries
+  ansible.builtin.pip:
+    name: "{{ item }}"
+    executable: pip3.9
+  loop:
+  - botocore
+  - boto3
+
+- name: Fetch DB secrets from SSM
+  set_fact:
+    pg_user: "{{ lookup('aws_ssm', '/myapp/POSTGRES_USER', region=aws_region, decrypt=True) }}"
+    pg_pass: "{{ lookup('aws_ssm', '/myapp/POSTGRES_PASSWORD', region=aws_region, decrypt=True) }}"
+    pg_db: "{{ lookup('aws_ssm', '/myapp/POSTGRES_DB', region=aws_region, decrypt=True) }}"
+
+- name: Run Docker Compose
+  shell: docker-compose up -d
+  args:
+    chdir: /opt/3tier-app
+  environment:
+    POSTGRES_USER: "{{ pg_user }}"
+    POSTGRES_PASSWORD: "{{ pg_pass }}"
+    POSTGRES_DB: "{{ pg_db }}"
+    PATH: "/usr/local/bin:/usr/bin:/bin"
 
